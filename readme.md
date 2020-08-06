@@ -15,13 +15,13 @@ Equipment:
 
 Running scope1090:
 
-```java -jar scope1090-1.0-SNAPSHOT-shaded.jar --lat=(your latitude) --lon=(your longitude) --server=127.0.0.1:30003```
+```java -jar scope1090-1.0-SNAPSHOT-shaded.jar --lat=(your latitude) --lon=(your longitude) --connect=127.0.0.1:30003```
 
 You may specify multiple servers as such:
 
 *This is useful if you also need to connect to an MLAT server feedback port.*
 
-```java -jar scope1090-1.0-SNAPSHOT-shaded.jar --lat=(your latitude) --lon=(your longitude) --server=127.0.0.1:30003 --server=127.0.0.1:31003```
+```java -jar scope1090-1.0-SNAPSHOT-shaded.jar --lat=(your latitude) --lon=(your longitude) --connect=127.0.0.1:30003 --connect=127.0.0.1:31003```
 
 Controls:
 - Mouse wheel: Zoom in/out
