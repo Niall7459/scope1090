@@ -56,7 +56,7 @@ fun parseOrigin(args: Array<String>, radar: Radar) {
 
 fun parseConnections(args: Array<String>, radar: Radar) {
     for (arg in args) {
-        if (!arg.startsWith("--connect=")) {
+        if (!arg.startsWith("--server=")) {
             continue
         }
 
