@@ -13,6 +13,7 @@ class Radar {
     private val tracks = ConcurrentHashMap<Int, RadarTrack>()
     private val connections = mutableListOf<Connection>()
     val sweep = RadarSweep(this)
+    val screen = RadarScreen(this)
     lateinit var origin: Coordinate
 
     init {
@@ -28,7 +29,7 @@ class Radar {
     private fun expireInactiveTracks() {
         for (track in tracks.values) {
             //keep track's saved for at least 60 seconds
-            if (System.currentTimeMillis() - track.lastHeard > 60_000 + sweep.calculateSweepPeriod()) {
+            if (System.currentTimeMillis() - track.lastHeard > 60_000) {
                 tracks.remove(track.address)
             }
         }
@@ -60,11 +61,12 @@ class Radar {
                 continue
             }
 
-            if (System.currentTimeMillis() - track.lastHeard > sweep.calculateSweepPeriod() * 1000 + 1_000) {
+            if (System.currentTimeMillis() - track.lastHeard > sweep.calculateSweepPeriod() * 2000) {
                 //nothing received since last interrogation, don't 'interrogate'
                 continue
             }
 
+            //is the track near the sweep line?
             if (track.realBearing in sweep.sweepRotation - 0.05..sweep.sweepRotation + 0.05) {
                 //'interrogate' the track
                 track.interrogate()

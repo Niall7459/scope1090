@@ -1,5 +1,6 @@
 package net.kitesoftware.scope1090.radar
 
+import net.kitesoftware.scope1090.*
 import net.kitesoftware.scope1090.radar.track.RadarTrack
 import java.awt.*
 import java.awt.image.BufferedImage
@@ -7,8 +8,9 @@ import kotlin.math.round
 
 val FONT = Font("Helvetica", Font.PLAIN, 10)
 val FONT_TRACK = Font("Helvetica", Font.PLAIN, 10)
+
 val STROKE_DEFAULT = BasicStroke(1f)
-val STROKE_DASHED = BasicStroke(1f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL, 0f, floatArrayOf(9f), 0f);
+val STROKE_DASHED = BasicStroke(1f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL, 0f, floatArrayOf(9f), 0f)
 
 /**
  * Created by niall on 22/05/2020.
@@ -16,7 +18,7 @@ val STROKE_DASHED = BasicStroke(1f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL
 class RadarScope(private val screen: RadarScreen) {
     private var scopeImage: BufferedImage? = null
     private var rangeImage: BufferedImage? = null
-    private var padding = 35
+    private var padding = 30
     var scaleChanged = false
     var scopeChanged = false
     var rotation = 0.0
@@ -24,28 +26,47 @@ class RadarScope(private val screen: RadarScreen) {
     var center = 0
     var scale = 1.0
     var size = 0
-
     var cursor = 0.0
+
+    private var originX = 0
+    private var originY = 0
+
+    /**
+     * Update dimension values
+     */
+    private fun updateDimensions() {
+        size = calculateSize()
+        diameter = calculateDiameter()
+        center = calculateCenter()
+
+        originX = screen.width / 2 - size / 2
+        originY = screen.height / 2 - size / 2
+    }
 
     /**
      * Update the background scope image
      */
     fun updateScope() {
-        size = calculateSize()
-        diameter = calculateDiameter()
-        center = calculateCenter()
-
+        updateDimensions()
         updateMarkers()
 
         for (track in screen.radar.activeTracks()) {
             track.screenPoint = null
         }
 
-        scopeImage = screen.gfxConfig?.createCompatibleImage(calculateSize(), calculateSize())
-        val graphics = scopeImage?.graphics as Graphics2D
+        scopeImage = screen.createImage(size, size)
+        val graphics = scopeImage?.createGraphics()
+
+        graphics ?: return
+        graphics.applyHDRenderingHints()
+
+        graphics.renderingHints[RenderingHints.KEY_ANTIALIASING] = RenderingHints.VALUE_ANTIALIAS_ON
+        graphics.renderingHints[RenderingHints.KEY_TEXT_ANTIALIASING] = RenderingHints.VALUE_TEXT_ANTIALIAS_ON
+        graphics.renderingHints[RenderingHints.KEY_STROKE_CONTROL] = RenderingHints.VALUE_STROKE_PURE
 
         paintScopeBase(graphics)
         paintGaugeMarkings(graphics)
+
         graphics.dispose()
     }
 
@@ -53,10 +74,17 @@ class RadarScope(private val screen: RadarScreen) {
      * Update the scope range markers image
      */
     private fun updateMarkers() {
-        rangeImage = screen.gfxConfig?.createCompatibleImage(diameter, diameter, BufferedImage.TYPE_INT_ARGB)
-        val graphics = rangeImage?.graphics as Graphics2D
+        rangeImage = screen.createImage(diameter, diameter)
+        val graphics = rangeImage?.createGraphics() as Graphics2D
+        graphics.applyHDRenderingHints()
 
-        paintScopeRangeMarkers(graphics)
+        if (SCOPE_RANGE_MARKER_INTERVAL > 0) {
+            paintScopeRangeMarkers(graphics)
+        }
+
+        if (SCOPE_CURSOR_ENABLED) {
+            paintScopeCursor(graphics)
+        }
     }
 
     /**
@@ -65,7 +93,7 @@ class RadarScope(private val screen: RadarScreen) {
      */
     private fun paintScopeBase(graphics: Graphics2D) {
         //scope draw in green
-        graphics.color = Color.GREEN
+        graphics.color = SCOPE_PRIMARY_COLOR
         graphics.stroke = BasicStroke(1.0F)
 
         //draw the scope circle
@@ -77,11 +105,16 @@ class RadarScope(private val screen: RadarScreen) {
      * @param graphics Graphics2D
      */
     private fun paintSweepLine(graphics: Graphics2D) {
+        if (SCOPE_SWEEP_RPM < 1) {
+            return
+        }
+
         //calculate length and angle of line
         val sweepLength = diameter / 2
         val sweepRotation = transformAngle(screen.radar.sweep.sweepRotation)
 
-        graphics.color = Color.GREEN
+        graphics.color = SCOPE_PRIMARY_COLOR
+
         for (i in 0..5) {
             graphics.drawLine(center, center, sweepRotation + (i * 0.01), sweepLength)
         }
@@ -95,7 +128,7 @@ class RadarScope(private val screen: RadarScreen) {
         graphics.font = FONT
 
         for (i in 0..359) {
-            graphics.color = Color(0, 155, 0)
+            graphics.color = SCOPE_PRIMARY_COLOR.darker()
 
             //convert angle to radians, apply offset
             val angleRadians = transformAngle(Math.toRadians(i.toDouble()))
@@ -110,7 +143,7 @@ class RadarScope(private val screen: RadarScreen) {
             graphics.drawLine(markerStart.x.toInt(), markerStart.y.toInt(), angleRadians, markerLength)
 
             if (markerLength == 10) {
-                graphics.color = Color(0, 255, 0)
+                graphics.color = SCOPE_PRIMARY_COLOR
                 val lblPos = calculatePoint(markerStart.x.toInt(), markerStart.y.toInt(), angleRadians, 20)
                 graphics.drawStringCentered(String.format("%03d", i), lblPos.x.toInt(), lblPos.y.toInt())
             }
@@ -122,8 +155,11 @@ class RadarScope(private val screen: RadarScreen) {
      * @param graphics Graphics2D
      */
     private fun paintScopeCursor(graphics: Graphics2D) {
+        //this image is rendered at an offset = to the padding, so take away the padding
+        val relativeCenter = center - padding
+
         graphics.stroke = STROKE_DASHED
-        graphics.drawLine(center, center, transformAngle(Math.toRadians(cursor)), diameter / 2)
+        graphics.drawLine(relativeCenter, relativeCenter, transformAngle(Math.toRadians(cursor)), diameter / 2)
         graphics.stroke = STROKE_DEFAULT
     }
 
@@ -132,14 +168,16 @@ class RadarScope(private val screen: RadarScreen) {
      * @param graphics Graphics2D
      */
     private fun paintScopeRangeMarkers(graphics: Graphics2D) {
-        graphics.color = Color(0, 155, 0)
+        graphics.color = SCOPE_PRIMARY_COLOR.darker()
         graphics.font = FONT
 
         //calculate center relative.
         val center = diameter / 2
 
+        val visibleRangeKm = calculateVisibleRange().toInt() / 1000
+
         //in kilometres
-        for (i in 0..calculateVisibleRange().toInt() step RANGE_MARKER_INTERVAL_KM) {
+        for (i in 0..visibleRangeKm step SCOPE_RANGE_MARKER_INTERVAL) {
             if (i == 0) continue
 
             val dist = (scale * i * 1000).toInt()
@@ -167,12 +205,14 @@ class RadarScope(private val screen: RadarScreen) {
                 continue
             }
 
-            var distance = track.screenDist
-            if (distance == null) {
-                distance = (track.interrogDist * scale).toInt()
-                track.screenDist = distance
+            //check if the scale has changed and distance needs to be re-calculated.
+            if (scaleChanged || track.screenDist == null) {
+                track.screenDist = (track.realDist * scale).toInt()
             }
 
+            val distance = track.screenDist ?: continue
+
+            //check the track is not outside of the view port
             if (distance > diameter / 2) {
                 continue
             }
@@ -180,24 +220,31 @@ class RadarScope(private val screen: RadarScreen) {
             //bearing needs + 1/2Pi because of java
             val bearing = transformAngle(track.interrogBearing)
 
-            if (track.screenPoint == null) {
+            if (track.screenPoint == null || scaleChanged) {
                 track.screenPoint = calculatePoint(center, center, bearing, distance)
             }
 
-            val x = track.screenPoint!!.x.toInt()
-            val y = track.screenPoint!!.y.toInt()
+            val screenPoint = track.screenPoint ?: continue
+            val x = screenPoint.x.toInt()
+            val y = screenPoint.y.toInt()
 
             if (track.screenCallout == null) {
+                //re-draw the cached call out
                 track.screenCallout = createTrackCallOut(track)
             }
 
-            val alpha = calculateTrackAlpha(track)
-            if (alpha == 0f) {
-                continue
+            //calculate the track opacity based on the time elapsed since it was interrogated.
+            if (SCOPE_FADE_TIME > 0) {
+                val alpha = calculateTrackAlpha(track)
+                if (alpha == 0f) {
+                    continue
+                }
+
+                graphics.composite = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha)
             }
 
-            graphics.composite = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha)
-            graphics.drawImage(track.screenCallout!!, x - 3, y - 6, 70, 30, null)
+            //draw callout
+            graphics.drawImage(track.screenCallout!!, x - 3, y - 6, null)
         }
 
         graphics.composite = composite
@@ -210,15 +257,20 @@ class RadarScope(private val screen: RadarScreen) {
     private fun createTrackCallOut(track: RadarTrack): BufferedImage {
         //centre track dot is at (x=3, y=6)
         //todo calc proper size
-        val callOut = screen.gfxConfig?.createCompatibleImage(70, 30, BufferedImage.TYPE_INT_ARGB)
-        val graphics = callOut?.graphics as Graphics2D
+        val callOut = screen.createImage(70, 30)
+        val graphics = callOut.createGraphics()
+        graphics.applyHDRenderingHints()
 
-        graphics.color = Color.GREEN
+        graphics.color = SCOPE_PRIMARY_COLOR
         graphics.font = FONT_TRACK
-        graphics.fillOval(0, 2, 5, 5)
+
+        if (!track.onGround) {
+            graphics.fillOval(0, 2, 5, 5)
+        }
+
         graphics.drawOval(0, 2, 5, 5)
 
-        var y = 8
+        var y = 10
         val callSign = track.identity
         if (callSign != null) {
             graphics.drawString(callSign, 10, y)
@@ -239,7 +291,8 @@ class RadarScope(private val screen: RadarScreen) {
      * @param track RadarTrack
      */
     private fun calculateTrackAlpha(track: RadarTrack): Float {
-        val percentSweepRotation = track.elapsedSinceInterrogation() / (screen.radar.sweep.sweepPeriod * 2000).toFloat()
+        val percentSweepRotation = track.elapsedSinceInterrogation() / (SCOPE_FADE_TIME.toFloat() * 1000)
+
         var alphaVal = 1 - percentSweepRotation
 
         alphaVal = alphaVal.coerceAtLeast(0.0f)
@@ -253,6 +306,8 @@ class RadarScope(private val screen: RadarScreen) {
      * @param graphics Graphics2D
      */
     fun paintScope(graphics: Graphics2D) {
+        graphics.translate(originX, originY)
+
         //create background scope if it does not exist
         if (scopeImage == null || scopeChanged) {
             updateScope()
@@ -261,20 +316,24 @@ class RadarScope(private val screen: RadarScreen) {
 
         if (scaleChanged) {
             updateMarkers()
-            scaleChanged = false
         }
 
-        //draw the cached parts
-        graphics.drawImage(scopeImage, 0, 0, size, size, null)
-        graphics.drawImage(rangeImage, padding, padding, diameter, diameter, null)
+        screen.drawImage(graphics, scopeImage, 0, 0)
+        screen.drawImage(graphics, rangeImage, padding, padding)
 
         paintTracks(graphics)
         paintSweepLine(graphics)
-        paintScopeCursor(graphics)
+
+        //reset this after, as track painting needs to know if the scale changed.
+        scaleChanged = false
     }
 
     /**
      * Calculate the sweep re-paint bounds.
+     *
+     * Returns a clip of screen to be repainted, aims to improve performance
+     * on low end machines by not having to repaint the whole screen
+     *
      */
     fun calculateSweepBounds(): Rectangle {
         val end = calculatePoint(center, center, transformAngle(screen.radar.sweep.sweepRotation) + 0.05, (diameter / 2))
@@ -284,7 +343,25 @@ class RadarScope(private val screen: RadarScreen) {
         val maxX = end.x.toInt().coerceAtLeast(center)
         val maxY = end.y.toInt().coerceAtLeast(center)
 
-        return Rectangle(minX - 2, minY - 2, maxX - minX + 4, maxY - minY + 4)
+        val bounds = Rectangle(minX - 2, minY - 2, maxX - minX + 4, maxY - minY + 4)
+
+        //apply transform
+        bounds.translate(originX, originY)
+
+        return bounds
+    }
+
+    /**
+     * Calculate the re paint bounds for the specified radar track
+     */
+    fun calculateTrackBounds(track: RadarTrack): Rectangle? {
+        //if either of these are null - no point re painting this area
+        val point = track.screenPoint ?: return null
+        val callOut = track.screenCallout ?: return null
+
+        val bounds = Rectangle(point.x.toInt() - 4, point.y.toInt() - 4, callOut.width + 4, callOut.height + 4)
+        bounds.translate(originX, originY)
+        return bounds
     }
 
     private fun transformAngle(angle: Double): Double {
@@ -309,7 +386,7 @@ class RadarScope(private val screen: RadarScreen) {
      * Calculate the center position of the radar scope
      */
     private fun calculateCenter(): Int {
-        return padding + (calculateDiameter() / 2)
+        return (calculateSize() / 2)
     }
 
     /**
@@ -323,6 +400,7 @@ class RadarScope(private val screen: RadarScreen) {
      * Set the visible range of the radar scope
      */
     fun setVisibleRange(range: Double) {
-        this.scale = diameter / (2 * range)
+        this.scale = diameter / (2 * range.coerceAtMost(250_000.0))
+        this.scaleChanged = true
     }
 }

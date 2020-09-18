@@ -1,28 +1,32 @@
 package net.kitesoftware.scope1090.radar
 
+import net.kitesoftware.scope1090.*
+import net.kitesoftware.scope1090.radar.component.ButtonPosition
+import net.kitesoftware.scope1090.radar.component.RadarButton
 import java.awt.*
 import java.awt.event.ActionEvent
 import java.awt.event.ActionListener
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
+import java.awt.geom.Ellipse2D
 import java.awt.geom.Point2D
 import java.awt.image.BufferedImage
+import java.awt.image.ImageObserver
 import javax.swing.JPanel
 import javax.swing.Timer
 import kotlin.math.cos
 import kotlin.math.round
 import kotlin.math.sin
 
-const val RANGE_MARKER_INTERVAL_KM = 50
-
 /**
  * Created by niall on 20/05/2020.
  */
 class RadarScreen(val radar: Radar) : JPanel(), ActionListener {
     var scope = RadarScope(this)
-    val gfxConfig: GraphicsConfiguration? =
-            GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice.defaultConfiguration
     var prevSweepBounds: Rectangle? = null
+
+    private val leftHandButtons = mutableListOf<RadarButton>()
+    private val rightHandButtons = mutableListOf<RadarButton>()
 
     init {
         val mouseListener = RadarMouseListener(this)
@@ -32,13 +36,25 @@ class RadarScreen(val radar: Radar) : JPanel(), ActionListener {
         addComponentListener(object : ComponentAdapter() {
             override fun componentResized(componentEvent: ComponentEvent) {
                 scope.updateScope()
-
-                //repaint whole screen
                 repaint()
             }
         })
 
-        val timer = Timer(25, this)
+        leftHandButtons.add(RadarButton("CALL", true, ButtonPosition.LEFT))
+        leftHandButtons.add(RadarButton("SQK", true, ButtonPosition.LEFT))
+        leftHandButtons.add(RadarButton("B3", false, ButtonPosition.LEFT))
+        leftHandButtons.add(RadarButton("B4", false, ButtonPosition.LEFT))
+        leftHandButtons.add(RadarButton("B5", false, ButtonPosition.LEFT))
+        leftHandButtons.add(RadarButton("B6", false, ButtonPosition.LEFT))
+
+        rightHandButtons.add(RadarButton("A1", false, ButtonPosition.RIGHT))
+        rightHandButtons.add(RadarButton("A2", false, ButtonPosition.RIGHT))
+        rightHandButtons.add(RadarButton("A3", false, ButtonPosition.RIGHT))
+        rightHandButtons.add(RadarButton("A4", false, ButtonPosition.RIGHT))
+        rightHandButtons.add(RadarButton("A5", false, ButtonPosition.RIGHT))
+        rightHandButtons.add(RadarButton("A6", false, ButtonPosition.RIGHT))
+
+        val timer = Timer(1000 / SCOPE_FRAMES_PER_SECOND, this)
         timer.isRepeats = true
         timer.start()
     }
@@ -54,6 +70,10 @@ class RadarScreen(val radar: Radar) : JPanel(), ActionListener {
         graphics.color = Color.BLACK
         graphics.fillRect(0, 0, width, height)
 
+        if (SCOPE_BUTTONS_ENABLED) {
+            paintSideButtons(graphics)
+        }
+
         scope.paintScope(graphics)
         paintScopeText(graphics)
     }
@@ -62,9 +82,14 @@ class RadarScreen(val radar: Radar) : JPanel(), ActionListener {
      * Create the radar scope cursor icon
      */
     private fun createCursorIcon(): Cursor {
+        //we have to use the default configuration, because this JPanel's GraphicsConfiguration is not initialized yet.
+        val graphicsConfiguration = GraphicsEnvironment
+                .getLocalGraphicsEnvironment().defaultScreenDevice.defaultConfiguration
+
         //always use 32 size to ensure windows compatibility.
-        val cursorImage = gfxConfig?.createCompatibleImage(32, 32, BufferedImage.TYPE_INT_ARGB)
-        val graphics = cursorImage?.createGraphics()!!
+        val cursorImage = graphicsConfiguration.createCompatibleImage(32, 32, BufferedImage.TYPE_INT_ARGB)
+
+        val graphics = cursorImage.createGraphics()
         graphics.color = Color.LIGHT_GRAY
 
         graphics.drawLine(7, 0, 7, 14)
@@ -78,44 +103,76 @@ class RadarScreen(val radar: Radar) : JPanel(), ActionListener {
      * @param graphics Graphics2D
      */
     private fun paintScopeText(graphics: Graphics2D) {
-        graphics.color = Color.GREEN
+        graphics.color = SCOPE_PRIMARY_COLOR
         graphics.font = FONT_TRACK
         graphics.drawString("ROTATION: " + round(scope.rotation), 10, 20)
-        graphics.drawString("RANGE: " + scope.calculateVisibleRange() / 1000 + " KM", 10, 40)
-        graphics.drawString("TRACKS: " + radar.activeTracks().size, 10, 60)
-        graphics.drawString("RPM: $ROTATIONS_PER_MINUTE", 10, 80)
+        graphics.drawString("RANGE: " + scope.calculateVisibleRange() / 1000 + " KM", 10, 35)
+        graphics.drawString("TRACKS: " + radar.activeTracks().size, 10, 50)
+
+        if (SCOPE_SWEEP_RPM > 0) {
+            graphics.drawString("RPM: $SCOPE_SWEEP_RPM", 10, 65)
+        }
+    }
+
+    private fun paintSideButtons(graphics: Graphics2D) {
+        val buttonSpacing = height / 7
+
+        var y = buttonSpacing
+        for (button in leftHandButtons) {
+            button.draw(graphics, 20, y - 25)
+            y += buttonSpacing
+        }
+
+        y = buttonSpacing
+        for (button in rightHandButtons) {
+            button.draw(graphics, width - 50 - 20, y - 25)
+            y += buttonSpacing
+        }
     }
 
     /**
      * Action handler
      */
     override fun actionPerformed(e: ActionEvent?) {
+        radar.sweep.updateSweepRotation()
+
         //if scale changed update whole screen
         if (scope.scaleChanged || scope.scopeChanged) {
             repaint()
             return
         }
 
-        //calculate update region for sweep line
+        //repaint track callouts
+        for (track in radar.activeTracks()) {
+            this.repaint(scope.calculateTrackBounds(track) ?: continue)
+        }
+
+        if (SCOPE_SWEEP_RPM > 0) {
+            repaintSweepBounds()
+        }
+
+        //note: all these repaint(...) calls will be
+        //reduced into one with their boundaries merged.
+    }
+
+    private fun repaintSweepBounds() {
         val sweepBounds = scope.calculateSweepBounds()
         this.repaint(sweepBounds)
 
-        //update previous bounds
+        //update previous bounds, so we dont leave behind a mess
         if (prevSweepBounds != null) {
             this.repaint(prevSweepBounds)
         }
 
         this.prevSweepBounds = sweepBounds
+    }
 
-        //repaint track callouts
-        for (track in radar.activeTracks()) {
-            val point = track.screenPoint
-            val callout = track.screenCallout
+    override fun createImage(width: Int, height: Int): BufferedImage {
+        return graphicsConfiguration.createCompatibleImage(width, height, BufferedImage.TYPE_INT_ARGB_PRE)
+    }
 
-            if (point != null && callout != null) {
-                this.repaint(point.x.toInt() - 5, point.y.toInt() - 5, callout.width + 5, callout.height + 5)
-            }
-        }
+    fun drawImage(graphics: Graphics2D, image: Image?, x: Int, y: Int) {
+        graphics.drawImage(image, x, y, null)
     }
 }
 
@@ -131,6 +188,20 @@ fun calculatePoint(oX: Int, oY: Int, angle: Double, length: Int): Point2D {
     val tY = oY + length * cos(angle)
 
     return Point2D.Double(round(tX), round(tY))
+}
+
+fun Graphics2D.applyHDRenderingHints() {
+    if (!SCOPE_HD) {
+        return
+    }
+
+    setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+    setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
+    setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC)
+    setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
+
+    //text aliasing off - causes issues with the small fonts
+    setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF)
 }
 
 /**

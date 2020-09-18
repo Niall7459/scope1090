@@ -1,9 +1,6 @@
 package net.kitesoftware.scope1090.connection
 
 import net.kitesoftware.scope1090.radar.Radar
-import net.kitesoftware.scope1090.spatial.Coordinate
-import net.kitesoftware.scope1090.spatial.calculateBearingBetweenPoints
-import net.kitesoftware.scope1090.spatial.calculateDistanceBetweenPoints
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.Socket
@@ -14,7 +11,8 @@ const val FIELD_ALT = 11
 const val FIELD_LAT = 14
 const val FIELD_LON = 15
 const val FIELD_MODEA = 17
-const val FIELD_SPI = 20
+const val FIELD_FLAG_SPI = 20
+const val FIELD_FLAG_GROUND = 21
 
 /**
  * Created by niall on 21/05/2020.
@@ -27,7 +25,7 @@ class BaseStationConnection(private val host: String, private val port: Int) : C
     override fun connect(radar: Radar) {
         this.radar = radar
 
-        val thread = Thread() {
+        val thread = Thread {
             this.socket = Socket(host, port)
             this.reader = InputStreamReader(socket.getInputStream())
 
@@ -38,7 +36,7 @@ class BaseStationConnection(private val host: String, private val port: Int) : C
             }
         }
 
-        thread.start();
+        thread.start()
     }
 
     override fun disconnect(radar: Radar) {
@@ -57,47 +55,38 @@ class BaseStationConnection(private val host: String, private val port: Int) : C
         radarTrack.lastHeard = System.currentTimeMillis()
 
         if (isFieldValid(dataFields, FIELD_CALL)) {
-            val callSign = dataFields[FIELD_CALL]
-            if (!radarTrack.identity.equals(callSign)) {
-                radarTrack.identity = callSign
-
-                //invalidate callout so it's redrawn
-                radarTrack.screenCallout = null
-            }
+            radarTrack.identity = dataFields[FIELD_CALL]
         }
 
         if (isFieldValid(dataFields, FIELD_MODEA)) {
-            val squawkCode = dataFields[FIELD_MODEA]
-            if (!radarTrack.modeA.equals(squawkCode)) {
-                radarTrack.modeA = squawkCode
-                radarTrack.screenCallout = null
-            }
-        }
-
-        if (isFieldValid(dataFields, FIELD_SPI)) {
-            if (dataFields[FIELD_SPI] == "-1") {
-                radarTrack.spiTime = System.currentTimeMillis()
-            }
+            radarTrack.modeA = dataFields[FIELD_MODEA]
         }
 
         if (isFieldValid(dataFields, FIELD_LAT) && isFieldValid(dataFields, FIELD_LON)) {
-            val latitude = dataFields[FIELD_LAT].toDouble()
-            val longitude = dataFields[FIELD_LON].toDouble()
-            val coordinate = Coordinate(latitude, longitude)
+            radarTrack.latitude = dataFields[FIELD_LAT].toDouble()
+            radarTrack.longitude = dataFields[FIELD_LON].toDouble()
 
-            //calculate bearing
-            radarTrack.realBearing = calculateBearingBetweenPoints(radar.origin, coordinate)
-            radarTrack.realDist = calculateDistanceBetweenPoints(radar.origin, coordinate)
-            radarTrack.plottable = true
+            radarTrack.updatePos(radar)
         }
 
         if (isFieldValid(dataFields, FIELD_ALT)) {
-            val altitude = dataFields[FIELD_ALT].toInt()
-            radarTrack.altitude = altitude
+            radarTrack.altitude = dataFields[FIELD_ALT].toInt()
+        }
+
+        radarTrack.onGround = isFlagActive(dataFields, FIELD_FLAG_GROUND)
+
+        if (isFlagActive(dataFields, FIELD_FLAG_SPI)) {
+            radarTrack.spiTime = System.currentTimeMillis()
         }
     }
 
     private fun isFieldValid(dataFields: List<String>, fieldId: Int): Boolean {
         return dataFields.size > fieldId && !dataFields[fieldId].isEmpty()
+    }
+
+    private fun isFlagActive(inputData: List<String>, index: Int): Boolean {
+        return if (!isFieldValid(inputData, index)) {
+            false
+        } else inputData[index] == "-1"
     }
 }

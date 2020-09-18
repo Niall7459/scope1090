@@ -1,9 +1,7 @@
 package net.kitesoftware.scope1090.radar
 
-import kotlin.concurrent.fixedRateTimer
-
-const val FRAMES_PER_SECOND = 30
-const val ROTATIONS_PER_MINUTE = 24
+import net.kitesoftware.scope1090.SCOPE_FRAMES_PER_SECOND
+import net.kitesoftware.scope1090.SCOPE_SWEEP_RPM
 
 /**
  * Created by niall on 20/05/2020.
@@ -13,42 +11,41 @@ class RadarSweep(private val radar: Radar) {
     var sweepPeriod = 0.0
 
     init {
-        val timerPeriod = 1000L / FRAMES_PER_SECOND
-
-        fixedRateTimer("sweepUpdater", false, 0, timerPeriod) {
-            updateSweepRotation()
-            radar.checkInterrogateTracks()
-        }
-
         sweepPeriod = calculateSweepPeriod()
     }
 
     /**
      * Update the sweep rotation
      */
-    private fun updateSweepRotation() {
+    fun updateSweepRotation() {
+        if (SCOPE_SWEEP_RPM < 1) {
+            return
+        }
+
         if (sweepRotation >= Math.PI * 2) {
             sweepRotation -= (Math.PI * 2) //prevents jitter caused by = 0
         } else {
             sweepRotation += calculateRadiansPerFrame()
         }
+
+        radar.checkInterrogateTracks()
     }
 
     /**
      * Calculate the increment of radians per frame
      */
     private fun calculateRadiansPerFrame(): Double {
-        val rotationsPerSecond = ROTATIONS_PER_MINUTE / 60.0
+        val rotationsPerSecond = SCOPE_SWEEP_RPM / 60.0
         val radiansPerSecond = (Math.PI * 2) * rotationsPerSecond
 
-        return radiansPerSecond / FRAMES_PER_SECOND
+        return radiansPerSecond / SCOPE_FRAMES_PER_SECOND
     }
 
     /**
      * Calculate the sweep period
      */
     fun calculateSweepPeriod(): Double {
-        return 1 / (ROTATIONS_PER_MINUTE / 60.0)
+        return 1 / (SCOPE_SWEEP_RPM / 60.0)
     }
 
     /**
